@@ -1,5 +1,5 @@
 [package]
-name = "compressor"
+name = "audio-compressor"
 version = "0.1.0"
 edition = "2021"
 
