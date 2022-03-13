@@ -1,13 +1,7 @@
 const DEFAULT_SAMPLE_RATE: u32 = 48_000;
-const MAX_DELAY_SAMPLES: usize = 1024;
+const MAX_DELAY_SAMPLES: usize = 1024 * 2; // Assumption of stereo!
 const SAMPLES_PER_UPDATE: usize = 32;
 const SPACING_DB: f32 = 5.0;
-
-#[derive(Debug, Default, Copy, Clone)]
-pub struct Sample {
-    left: f32,
-    right: f32,
-}
 
 pub struct Compressor {
     meter_gain: f32,
@@ -35,7 +29,7 @@ pub struct Compressor {
     delay_buffer_size: usize,
     delay_write_pos: usize,
     delay_read_pos: usize,
-    delay_buffer: [Sample; MAX_DELAY_SAMPLES],
+    delay_buffer: [f32; MAX_DELAY_SAMPLES * 2], // Assumption of stereo!
 }
 
 impl Compressor {
@@ -83,7 +77,7 @@ impl Compressor {
         post_gain: f32,
         wet: f32,
     ) -> Self {
-        let mut delay_buffer_size = (sample_rate as f32 * pre_delay) as usize;
+        let mut delay_buffer_size = (sample_rate as f32 * pre_delay) as usize * 2;
 
         if delay_buffer_size < 1 {
             delay_buffer_size = 1;
@@ -175,11 +169,12 @@ impl Compressor {
             delay_buffer_size,
             delay_write_pos: 0,
             delay_read_pos: if delay_buffer_size > 1 { 1 } else { 0 },
-            delay_buffer: [Sample::default(); MAX_DELAY_SAMPLES],
+            delay_buffer: [0.0; MAX_DELAY_SAMPLES * 2], // Assumption of stereo!
         }
     }
 
-    pub fn process(&mut self, input: &[Sample], output: &mut [Sample]) {
+    // It is currently assumed that `input` and `output` are interleaved stereo audio buffers.
+    pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         let chunks = input.len() / SAMPLES_PER_UPDATE;
         let ang_90 = std::f32::consts::PI * 0.5;
         let ang_90_inv = 2.0 / std::f32::consts::PI;
@@ -219,11 +214,11 @@ impl Compressor {
             };
 
             for _chi in 0..SAMPLES_PER_UPDATE {
-                let input_l = input[sample_pos].left * self.linear_pre_gain;
-                let input_r = input[sample_pos].right * self.linear_pre_gain;
+                let input_l = input[sample_pos * 2] * self.linear_pre_gain;
+                let input_r = input[(sample_pos * 2) + 1] * self.linear_pre_gain;
 
-                self.delay_buffer[self.delay_write_pos].left = input_l;
-                self.delay_buffer[self.delay_write_pos].right = input_r;
+                self.delay_buffer[(self.delay_write_pos * 2)] = input_l;
+                self.delay_buffer[(self.delay_write_pos * 2) + 1] = input_r;
 
                 let input_l = input_l.abs();
                 let input_r = input_r.abs();
@@ -286,8 +281,9 @@ impl Compressor {
                     self.meter_gain += (premix_gain_db - self.meter_gain) * self.meter_release;
                 }
 
-                output[sample_pos].left = self.delay_buffer[self.delay_read_pos].left * gain;
-                output[sample_pos].right = self.delay_buffer[self.delay_read_pos].right * gain;
+                output[(sample_pos * 2)] = self.delay_buffer[(self.delay_read_pos * 2)] * gain;
+                output[(sample_pos * 2) + 1] =
+                    self.delay_buffer[(self.delay_read_pos * 2) + 1] * gain;
 
                 sample_pos += 1;
                 self.delay_read_pos = (self.delay_read_pos + 1) % self.delay_buffer_size;
