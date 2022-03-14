@@ -175,7 +175,7 @@ impl Compressor {
 
     // It is currently assumed that `input` and `output` are interleaved stereo audio buffers.
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
-        let chunks = input.len() / SAMPLES_PER_UPDATE;
+        let chunks = input.len() / 2 / SAMPLES_PER_UPDATE;
         let ang_90 = std::f32::consts::PI * 0.5;
         let ang_90_inv = 2.0 / std::f32::consts::PI;
         let mut sample_pos = 0;
@@ -213,7 +213,7 @@ impl Compressor {
                 1.0 - (0.25 / attenuate).powf(self.attack_samples_inverse)
             };
 
-            for _chi in 0..SAMPLES_PER_UPDATE {
+            for _ in 0..SAMPLES_PER_UPDATE {
                 let input_l = input[sample_pos * 2] * self.linear_pre_gain;
                 let input_r = input[(sample_pos * 2) + 1] * self.linear_pre_gain;
 
@@ -363,5 +363,29 @@ fn compresor_curve(
         knee_curve(x, k, linear_threshold)
     } else {
         db_to_linear(knee_db_offset + slope * (linear_to_db(x) - threshold - knee))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let mut compressor = {
+            let pre_gain = 0.0;
+            let threshold = -24.0;
+            let knee = 30.0;
+            let ratio = 12.0;
+            let attack = 0.003; // Seconds
+            let release = 0.25; // Seconds
+
+            Compressor::new(DEFAULT_SAMPLE_RATE, pre_gain, threshold, knee, ratio, attack, release)
+        };
+
+        let input = [0.0; 960];
+        let mut output = [0.0; 960];
+
+        compressor.process(&input, &mut output);
     }
 }
