@@ -4,6 +4,7 @@ const SAMPLES_PER_UPDATE: usize = 32;
 const SPACING_DB: f32 = 5.0;
 
 pub struct Compressor {
+    num_channels: usize,
     meter_gain: f32,
     meter_release: f32,
     threshold: f32,
@@ -29,11 +30,13 @@ pub struct Compressor {
     delay_buffer_size: usize,
     delay_write_pos: usize,
     delay_read_pos: usize,
-    delay_buffer: [f32; MAX_DELAY_SAMPLES * 2], // Assumption of stereo!
+    delay_buffer: Vec<f32>,
 }
 
 impl Compressor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        num_channels: usize,
         sample_rate: u32,
         pre_gain: f32,
         threshold: f32,
@@ -43,6 +46,7 @@ impl Compressor {
         release: f32,
     ) -> Self {
         Self::advanced_compressor(
+            num_channels,
             sample_rate,
             pre_gain,
             threshold,
@@ -62,6 +66,7 @@ impl Compressor {
 
     #[allow(clippy::too_many_arguments)]
     fn advanced_compressor(
+        num_channels: usize,
         sample_rate: u32,
         pre_gain: f32,
         threshold: f32,
@@ -77,7 +82,7 @@ impl Compressor {
         post_gain: f32,
         wet: f32,
     ) -> Self {
-        let mut delay_buffer_size = (sample_rate as f32 * pre_delay) as usize * 2;
+        let mut delay_buffer_size = (sample_rate as f32 * pre_delay) as usize * num_channels;
 
         if delay_buffer_size < 1 {
             delay_buffer_size = 1;
@@ -144,6 +149,7 @@ impl Compressor {
         let d = y1;
 
         Self {
+            num_channels,
             meter_gain,
             meter_release,
             threshold,
@@ -169,13 +175,13 @@ impl Compressor {
             delay_buffer_size,
             delay_write_pos: 0,
             delay_read_pos: if delay_buffer_size > 1 { 1 } else { 0 },
-            delay_buffer: [0.0; MAX_DELAY_SAMPLES * 2], // Assumption of stereo!
+            delay_buffer: vec![0.0; MAX_DELAY_SAMPLES * num_channels],
         }
     }
 
-    // It is currently assumed that `input` and `output` are interleaved stereo audio buffers.
+    // It is assumed that `input` and `output` are interleaved audio buffers.
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
-        let chunks = input.len() / 2 / SAMPLES_PER_UPDATE;
+        let chunks = input.len() / self.num_channels / SAMPLES_PER_UPDATE;
         let ang_90 = std::f32::consts::PI * 0.5;
         let ang_90_inv = 2.0 / std::f32::consts::PI;
         let mut sample_pos = 0;
@@ -214,15 +220,21 @@ impl Compressor {
             };
 
             for _ in 0..SAMPLES_PER_UPDATE {
-                let input_l = input[sample_pos * 2] * self.linear_pre_gain;
-                let input_r = input[(sample_pos * 2) + 1] * self.linear_pre_gain;
+                let input_max = {
+                    let mut input_max = 0.0f32;
 
-                self.delay_buffer[(self.delay_write_pos * 2)] = input_l;
-                self.delay_buffer[(self.delay_write_pos * 2) + 1] = input_r;
+                    for c in 0..self.num_channels {
+                        let input_sample =
+                            input[(sample_pos * self.num_channels) + c] * self.linear_pre_gain;
 
-                let input_l = input_l.abs();
-                let input_r = input_r.abs();
-                let input_max = input_l.max(input_r);
+                        self.delay_buffer[(self.delay_write_pos * self.num_channels) + c] =
+                            input_sample;
+
+                        input_max = input_max.max(input_sample.abs());
+                    }
+
+                    input_max
+                };
 
                 let attenuation = if input_max < 0.0001 {
                     1.0
@@ -281,9 +293,10 @@ impl Compressor {
                     self.meter_gain += (premix_gain_db - self.meter_gain) * self.meter_release;
                 }
 
-                output[(sample_pos * 2)] = self.delay_buffer[(self.delay_read_pos * 2)] * gain;
-                output[(sample_pos * 2) + 1] =
-                    self.delay_buffer[(self.delay_read_pos * 2) + 1] * gain;
+                for c in 0..self.num_channels {
+                    output[(sample_pos * self.num_channels) + c] =
+                        self.delay_buffer[(self.delay_read_pos * self.num_channels) + c] * gain;
+                }
 
                 sample_pos += 1;
                 self.delay_read_pos = (self.delay_read_pos + 1) % self.delay_buffer_size;
@@ -296,6 +309,7 @@ impl Compressor {
 impl Default for Compressor {
     fn default() -> Self {
         Self::advanced_compressor(
+            2,
             DEFAULT_SAMPLE_RATE,
             0.000,   // pregain
             -24.000, // threshold
@@ -373,6 +387,7 @@ mod tests {
     #[test]
     fn it_works() {
         let mut compressor = {
+            let num_channels = 2;
             let pre_gain = 0.0;
             let threshold = -24.0;
             let knee = 30.0;
@@ -380,7 +395,16 @@ mod tests {
             let attack = 0.003; // Seconds
             let release = 0.25; // Seconds
 
-            Compressor::new(DEFAULT_SAMPLE_RATE, pre_gain, threshold, knee, ratio, attack, release)
+            Compressor::new(
+                num_channels,
+                DEFAULT_SAMPLE_RATE,
+                pre_gain,
+                threshold,
+                knee,
+                ratio,
+                attack,
+                release,
+            )
         };
 
         let input = [0.0; 960];
