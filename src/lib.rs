@@ -179,9 +179,10 @@ impl Compressor {
         }
     }
 
-    // It is assumed that `input` and `output` are interleaved audio buffers.
-    pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
-        let chunks = input.len() / self.num_channels / SAMPLES_PER_UPDATE;
+    // It is assumed that `buffer` is an interleaved audio buffer.
+    // It is modified in place.
+    pub fn process(&mut self, buffer: &mut [f32]) {
+        let chunks = buffer.len() / self.num_channels / SAMPLES_PER_UPDATE;
         let ang_90 = std::f32::consts::PI * 0.5;
         let ang_90_inv = 2.0 / std::f32::consts::PI;
         let mut sample_pos = 0;
@@ -225,7 +226,7 @@ impl Compressor {
 
                     for c in 0..self.num_channels {
                         let input_sample =
-                            input[(sample_pos * self.num_channels) + c] * self.linear_pre_gain;
+                            buffer[(sample_pos * self.num_channels) + c] * self.linear_pre_gain;
 
                         self.delay_buffer[(self.delay_write_pos * self.num_channels) + c] =
                             input_sample;
@@ -294,7 +295,7 @@ impl Compressor {
                 }
 
                 for c in 0..self.num_channels {
-                    output[(sample_pos * self.num_channels) + c] =
+                    buffer[(sample_pos * self.num_channels) + c] =
                         self.delay_buffer[(self.delay_read_pos * self.num_channels) + c] * gain;
                 }
 
@@ -407,9 +408,8 @@ mod tests {
             )
         };
 
-        let input = [0.0; 960];
-        let mut output = [0.0; 960];
+        let mut buffer = [0.0; 960];
 
-        compressor.process(&input, &mut output);
+        compressor.process(&mut buffer);
     }
 }
